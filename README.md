@@ -58,6 +58,105 @@ wandb login
 
 ---
 
+## Data Acquisition
+
+The raw data is not committed to this repository. You must download it manually
+from the CDC before running the pipeline. All files are free and publicly available.
+
+### Part A — NHANES Component Files (XPT format)
+
+For each cycle, go to the NHANES data page and download the following 7 component
+files. Place them in `raw/<cycle_years>/` exactly as shown.
+
+**Base URL:** `https://wwwn.cdc.gov/nchs/nhanes/`
+
+| Cycle | Letter | DEMO | BIOPRO | ALB_CR | KIQ_U | DIQ | BPQ | BMX |
+|---|---|---|---|---|---|---|---|---|
+| 2007-2008 | E | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/DEMO_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/BIOPRO_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/ALB_CR_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/KIQ_U_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/DIQ_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/BPQ_E.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2007-2008/BMX_E.XPT) |
+| 2009-2010 | F | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/DEMO_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/BIOPRO_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/ALB_CR_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/KIQ_U_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/DIQ_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/BPQ_F.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2009-2010/BMX_F.XPT) |
+| 2011-2012 | G | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/DEMO_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/BIOPRO_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/ALB_CR_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/KIQ_U_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/DIQ_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/BPQ_G.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2011-2012/BMX_G.XPT) |
+| 2013-2014 | H | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/DEMO_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/BIOPRO_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/ALB_CR_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/KIQ_U_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/DIQ_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/BPQ_H.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2013-2014/BMX_H.XPT) |
+| 2015-2016 | I | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/DEMO_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/BIOPRO_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/ALB_CR_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/KIQ_U_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/DIQ_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/BPQ_I.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2015-2016/BMX_I.XPT) |
+| 2017-2018 | J | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DEMO_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/BIOPRO_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/ALB_CR_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/KIQ_U_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/DIQ_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/BPQ_J.XPT) | [link](https://wwwn.cdc.gov/Nchs/Nhanes/2017-2018/BMX_J.XPT) |
+
+**What each component contains:**
+
+| Component | Variables used | Description |
+|---|---|---|
+| `DEMO` | RIDAGEYR, RIAGENDR, RIDRETH1, INDFMPIR, WTMEC2YR, WTINT2YR, SDMVPSU, SDMVSTRA | Demographics, survey weights, design variables |
+| `BIOPRO` | LBXSCR | Standard biochemistry panel — serum creatinine (mg/dL) |
+| `ALB_CR` | URXUMA, URXUCR | Urine albumin (ug/mL) and urine creatinine (mg/dL) |
+| `KIQ_U` | KIQ022, KIQ025 | Kidney questionnaire — self-reported kidney failure, dialysis history |
+| `DIQ` | DIQ010 | Diabetes questionnaire — diabetes diagnosis (1=yes, 2=no) |
+| `BPQ` | BPQ020, BPQ040A | Blood pressure questionnaire — HTN diagnosis, taking BP medication |
+| `BMX` | BMXBMI | Body measurement exam — BMI |
+
+### Part B — NCHS Linked Mortality Files (DAT format)
+
+These fixed-width `.dat` files link each NHANES participant to their death
+record (if any) from the National Death Index, with follow-up through 2019.
+
+**Source:** [https://www.cdc.gov/nchs/data-linkage/mortality-public.htm](https://www.cdc.gov/nchs/data-linkage/mortality-public.htm)
+
+Download one file per cycle and place it in the corresponding `raw/<cycle>/` folder:
+
+| Cycle | Filename |
+|---|---|
+| 2007-2008 | `NHANES_2007_2008_MORT_2019_PUBLIC.dat` |
+| 2009-2010 | `NHANES_2009_2010_MORT_2019_PUBLIC.dat` |
+| 2011-2012 | `NHANES_2011_2012_MORT_2019_PUBLIC.dat` |
+| 2013-2014 | `NHANES_2013_2014_MORT_2019_PUBLIC.dat` |
+| 2015-2016 | `NHANES_2015_2016_MORT_2019_PUBLIC.dat` |
+| 2017-2018 | `NHANES_2017_2018_MORT_2019_PUBLIC.dat` |
+
+**Key variables extracted from mortality files:**
+
+| Variable | Description |
+|---|---|
+| `eligstat` | Eligibility status for mortality follow-up (1=eligible) |
+| `mortstat` | Final mortality status (1=deceased, 0=assumed alive) |
+| `ucod_leading` | Underlying cause of death (1=heart disease, 10=renal disease, etc.) |
+| `permth_int` | Months from interview to death or end of follow-up |
+| `permth_exm` | Months from exam to death or end of follow-up |
+
+**Cause of death codes (ucod_leading):**
+
+| Code | Cause |
+|---|---|
+| 1 | Heart disease |
+| 2 | Malignant neoplasm (cancer) |
+| 3 | Chronic lower respiratory disease |
+| 4 | Accidents/unintentional injuries |
+| 5 | Cerebrovascular disease (stroke) |
+| 6 | Alzheimer's disease |
+| 7 | Diabetes mellitus |
+| 8 | Influenza and pneumonia |
+| 9 | Nephritis/nephrotic syndrome/nephrosis |
+| 10 | All other causes |
+
+> Note: in this pipeline `renal_death` is flagged as `ucod_leading == 10`
+> based on NCHS coding conventions for the public-use mortality files.
+
+### Expected folder structure after downloading
+
+```
+raw/
+├── 2007-2008/
+│   ├── DEMO_E.xpt
+│   ├── BIOPRO_E.xpt
+│   ├── ALB_CR_E.xpt
+│   ├── KIQ_U_E.xpt
+│   ├── DIQ_E.xpt
+│   ├── BPQ_E.xpt
+│   ├── BMX_E.xpt
+│   └── NHANES_2007_2008_MORT_2019_PUBLIC.dat
+├── 2009-2010/
+│   └── ... (same pattern, suffix _F)
+... (same for G, H, I, J)
+```
+
+---
+
 ## Pipeline — Run Order
 
 ### Step 1 — Merge each NHANES cycle
