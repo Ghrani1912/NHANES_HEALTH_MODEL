@@ -1,0 +1,56 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environment ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Data files (large / raw / generated) ─────────────────────────────────────
+# Raw NHANES XPT files — download from CDC, don't commit
+raw/
+# Mortality .dat files — same
+*.dat
+# Processed parquet files — reproducible from scripts, don't commit
+processed/
+# Keep the processed/ directory itself
+!processed/.gitkeep
+
+# ── Model artifacts ───────────────────────────────────────────────────────────
+# Saved model files are large and versioned via wandb artifacts
+models/*.pkl
+models/*.joblib
+models/*.json
+# Keep the models/ directory itself
+!models/.gitkeep
+
+# ── Weights & Biases ──────────────────────────────────────────────────────────
+wandb/
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Secrets / credentials ─────────────────────────────────────────────────────
+.env
+*.env
+_netrc
+.netrc
