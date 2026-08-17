@@ -1,77 +1,72 @@
-# NHANES Diabetes Screening Module
+# Diabetes Screening Module
 
-A machine learning screening tool that predicts **undiagnosed diabetes and
-prediabetes** using only non-lab, easily-collectible features — age, BMI,
-waist circumference, blood pressure, family history, physical activity, and
-smoking status.
+Predicts undiagnosed diabetes and prediabetes using only non-lab,
+easily-collectible features — age, BMI, waist circumference, family
+history, physical activity, diet, sleep, and smoking. No blood draw required.
 
-This is a separate module from the CKD mortality model. It solves a
-**binary classification** problem, not a survival analysis problem.
-
----
-
-## Clinical Motivation
-
-Approximately 1 in 5 diabetics in the US are undiagnosed. Standard screening
-tools like FINDRISC and the ADA risk test use simple questionnaire + physical
-measurement features to identify who should be sent for an HbA1c test. This
-model mirrors that paradigm but learns the risk weights from data rather than
-using hand-crafted scoring rules.
-
-**The key constraint:** no lab values as features. The model must work with
-what a GP can collect before ordering any blood tests.
+This mirrors real clinical screening tools (FINDRISC, ADA risk test) but
+learns risk weights from data rather than using hand-crafted scoring rules.
 
 ---
 
-## Structure
+## Purpose
 
-```
-diabetes_screening/
-├── scripts/
-│   ├── download_components.py      # Step 0: download new XPT components
-│   ├── merge_diabetes_cycle.py     # Step 1: merge components per cycle
-│   ├── pool_diabetes_cycles.py     # Step 2: stack all cycles
-│   ├── build_diabetes_label.py     # Step 3: build labels + engineer features
-│   └── train_diabetes_model.py     # Step 4: train + evaluate + save models
-├── processed/                      # Intermediate parquet files (not committed)
-├── models/                         # Saved model artifacts (not committed)
-└── README.md
-```
+Flag people who are likely to have undiagnosed diabetes so a GP can order
+a confirmatory HbA1c test. The model is designed for the pre-diagnosis
+screening context: it only applies to people who report they do not have
+diabetes (DIQ010 ≠ 1).
+
+**The key clinical metric** is sensitivity at a fixed specificity — not
+accuracy. A GP cares about "how many undiagnosed diabetics would I miss,"
+not "what percentage of predictions are correct."
 
 ---
 
-## Additional Data Required
+## Scripts (`scripts/`)
 
-This module needs 6 new NHANES component files per cycle that are **not**
-used in the CKD module. Run the download script first:
-
-```bash
-cd diabetes_screening/scripts
-python download_components.py
-```
-
-This downloads the following into the existing `raw/<cycle>/` folders:
-
-| Component | Key variable(s) | Role |
+| Script | Step | What it does |
 |---|---|---|
-| `GHB` | `LBXGH` | HbA1c % — **outcome label only** |
-| `GLU` | `LBXGLU` | Fasting glucose mg/dL — **outcome label only** |
-| `BPX` | `BPXSY1`, `BPXSY2`, `BPXDI1`, `BPXDI2` | Measured blood pressure readings |
-| `MCQ` | `MCQ300C` | Close relative had diabetes (family history) |
-| `PAQ` | `PAQ605`, `PAQ620`, `PAQ650`, `PAQ665` | Physical activity (work + recreational) |
-| `SMQ` | `SMQ020`, `SMQ040` | Smoking history and current status |
+| `merge_diabetes_cycle.py` | 1 | Merges components per cycle (reads from `diabetes_screening/raw/`) |
+| `pool_diabetes_cycles.py` | 2 | Stacks all 6 cycles |
+| `build_diabetes_label.py` | 3 | Builds ADA-threshold labels + engineers features |
+| `train_diabetes_model.py` | 4 | Trains LR + XGBoost with calibration, reports clinical metrics |
+| `diagnose_diabetes_model.py` | 5 | Calibration plots, PR curve, subgroup analysis, missingness check |
+| `evaluate_model.py` | 6 | Bootstrap CIs, leave-one-cycle-out validation, subgroup performance |
+| `assay_era_analysis.py` | 7 | Investigates G8 assay era performance gap |
 
-**BMX** (`BMXWAIST`) is already downloaded as part of the CKD module.
+---
+
+## Data Required
+
+### From `diabetes_screening/raw/<cycle>/`
+
+These files are separate from the CKD module. Download and place in
+`diabetes_screening/raw/<cycle>/`:
+
+| Component | Variables | Description |
+|---|---|---|
+| `GHB` | LBXGH | HbA1c % — **outcome label only, never a feature** |
+| `GLU` | LBXGLU, WTSAF2YR | Fasting glucose — **outcome label only** |
+| `MCQ` | MCQ300C | Close relative had diabetes |
+| `PAQ` | PAQ605–PAQ670, PAD615–PAD680 | Physical activity (vigorous/moderate, days, minutes) |
+| `SMQ` | SMQ020, SMQ040 | Smoking history and current status |
+| `SLQ` | SLD010H / SLD012 | Sleep hours (variable renamed in 2015) |
+| `DR1TOT` | DR1TKCAL, DR1TSUGR, DR1TFIBE, DR1TCARB | 24hr dietary recall |
+
+Plus `DEMO`, `BMX`, `BPQ`, `DIQ` which are shared with the CKD module and
+also needed here.
+
+Download URL pattern:
+`https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/<start_year>/DataFiles/<FILE>.XPT`
 
 ---
 
 ## Run Order
 
 ```bash
-# Step 0: download new components (one-time)
-python download_components.py
+cd diabetes_screening/scripts
 
-# Step 1: merge per cycle
+# Step 1: merge per cycle (or use main merge_cycle.py which now includes all components)
 python merge_diabetes_cycle.py 2007-2008 E
 python merge_diabetes_cycle.py 2009-2010 F
 python merge_diabetes_cycle.py 2011-2012 G
@@ -79,15 +74,39 @@ python merge_diabetes_cycle.py 2013-2014 H
 python merge_diabetes_cycle.py 2015-2016 I
 python merge_diabetes_cycle.py 2017-2018 J
 
-# Step 2: pool cycles
+# Step 2: pool
 python pool_diabetes_cycles.py
 
 # Step 3: build labels and features
 python build_diabetes_label.py
 
-# Step 4: train models
+# Step 4: train
 python train_diabetes_model.py
+
+# Step 5 (optional): detailed diagnostics
+python diagnose_diabetes_model.py
+
+# Step 6 (optional): full evaluation
+python evaluate_model.py
+
+# Step 7 (optional): assay era investigation
+python assay_era_analysis.py
 ```
+
+> **Note:** The main `scripts/merge_cycle.py` now pulls all components including
+> GHB, GLU, MCQ, PAQ, SMQ, SLQ, DR1TOT. After running the main merge/pool
+> pipeline, `build_diabetes_label.py` can read directly from
+> `processed/pooled.parquet` instead.
+
+---
+
+## Cohort
+
+- **Definition:** Adults (age ≥ 18) who self-report no diabetes diagnosis
+  (DIQ010 = 2 or 3) and have at least one lab measurement (HbA1c or glucose)
+- **Size:** 22,175 rows (complete cases including diet/sleep/income)
+- **Undiagnosed diabetes prevalence:** 5.0%
+- **Prediabetes prevalence:** 39.6%
 
 ---
 
@@ -95,89 +114,116 @@ python train_diabetes_model.py
 
 | Feature | Source | Description |
 |---|---|---|
-| `RIDAGEYR` | DEMO | Age in years |
-| `BMXBMI` | BMX | Body mass index |
-| `BMXWAIST` | BMX | Waist circumference (cm) |
-| `systolic_bp` | BPX (mean of 2 readings) | Systolic blood pressure |
-| `diastolic_bp` | BPX (mean of 2 readings) | Diastolic blood pressure |
-| `INDFMPIR` | DEMO | Income-to-poverty ratio |
-| `female` | DEMO (RIAGENDR) | Sex |
-| `family_hx_dm` | MCQ (MCQ300C) | Close relative with diabetes |
-| `physically_active` | PAQ | Any moderate/vigorous activity |
-| `current_smoker` | SMQ (SMQ040) | Current smoker |
-| `race_eth` | DEMO (RIDRETH1) | Race/ethnicity (one-hot encoded) |
+| `age` | DEMO | Age in years |
+| `female` | DEMO | Sex (1=female) |
+| `race_eth` | DEMO | Race/ethnicity (one-hot encoded) |
+| `bmi` | BMX | Body mass index |
+| `waist_cm` | BMX | Waist circumference (cm) |
+| `hypertension` | BPQ | Diagnosed hypertension |
+| `family_history_diabetes` | MCQ | Close relative with diabetes |
+| `ever_smoker` | SMQ | Smoked ≥100 cigarettes ever |
+| `current_smoker` | SMQ | Currently smoking |
+| `met_minutes_total` | PAQ | Total MET-minutes/week (GPAQ method) |
+| `sedentary_minutes` | PAQ | Sedentary minutes per day |
+| `calories` | DR1TOT | Daily caloric intake |
+| `sugar_g` | DR1TOT | Daily sugar intake (g) |
+| `fiber_g` | DR1TOT | Daily fiber intake (g) |
+| `carbs_g` | DR1TOT | Daily carbohydrate intake (g) |
+| `sleep_hours` | SLQ | Sleep hours per night |
+| `income_ratio` | DEMO | Income-to-poverty ratio |
 
-**Strictly excluded from features:** `LBXGH` (HbA1c), `LBXGLU` (glucose),
-`LBXSCR` (creatinine), or any other lab value.
-
----
-
-## Outcome Labels
-
-| Label | Definition |
-|---|---|
-| `diabetes_lab` | HbA1c ≥ 6.5% OR fasting glucose ≥ 126 mg/dL |
-| `prediabetes_lab` | HbA1c 5.7–6.4% OR glucose 100–125 mg/dL |
-| `diabetes_selfreport` | DIQ010 == 1 (told by doctor they have diabetes) |
-| `undiagnosed_dm` | `diabetes_lab=True` AND `diabetes_selfreport=False` |
-| `screen_positive` | `undiagnosed_dm` OR `prediabetes_lab` — **training target** |
-
-The model trains on `screen_positive`. The bonus analysis reports sensitivity
-specifically within the `undiagnosed_dm` subgroup.
+**Strictly excluded:** HbA1c (LBXGH), fasting glucose (LBXGLU), serum
+creatinine (LBXSCR), or any other lab value.
 
 ---
 
-## Models
+## Models and Results
 
-**Logistic Regression** — interpretable clinical baseline. Mirrors how FINDRISC
-and similar tools are validated. Coefficients map directly to clinical intuition.
+### Deployment-relevant numbers (G8 era, 2015–2018)
 
-**XGBoost (binary:logistic)** — primary model. Captures non-linear relationships
-(e.g. BMI × age interaction) that logistic regression cannot.
+These are the honest numbers for a tool deployed today, since any
+real-world use faces a G8-era-equivalent population:
 
-Both evaluated with 5-fold stratified CV. Metrics: AUC (primary), precision,
-recall, F1.
+| Model | AUC | Sensitivity @ 80% specificity |
+|---|---|---|
+| Logistic Regression | **0.736 ± 0.007** | **~49%** |
 
-**SHAP values** computed for XGBoost to show which features drive individual
-predictions — important for clinical trust and interpretability.
+### Historical / all-eras numbers (2007–2018 pooled)
 
----
+Useful for comparison with older literature, but not the deployment number:
 
-## Bonus Analysis: Sensitivity Among Undiagnosed Diabetics
-
-The most clinically meaningful metric for a screening tool:
-
-> "Of the people who have diabetes but don't know it, what fraction does
-> the model flag as high-risk?"
-
-This is reported separately from overall recall because the screening population
-(self-reported non-diabetics) has a very different base rate than the general
-population.
+| Model | AUC | 95% CI | Sensitivity @ 80% specificity |
+|---|---|---|---|
+| Logistic Regression | 0.786 | [0.774, 0.797] | 56.9% [53.9–59.7%] |
+| XGBoost | 0.780 | — | 57.1% |
 
 ---
 
-## Saved Models
+## Why the G8-era Performance is Lower
+
+Three tests were run to diagnose the 2015–2018 performance gap:
+
+1. **HbA1c assay check** — No systematic G8 calibration drift found.
+   The Tosoh G8 assay does not read consistently lower/higher.
+
+2. **Within-era validation** — G8-era cycles score 0.736 even when
+   trained within G8 data. The problem is not the assay — the population
+   is genuinely harder to screen.
+
+3. **Root cause** — Self-reported diabetes diagnosis rate rose from
+   **11.8% to 14.5%** between eras (controlled for age). More people
+   know their status in 2015–2018, leaving a harder-to-detect residual
+   undiagnosed population — likely people who have slipped through
+   multiple screening opportunities.
+
+---
+
+## Key Diagnostic Findings
+
+**Lean subgroup blind spot:** The model catches only 18% of lean
+diabetics (normal BMI + normal waist) at the 80% specificity threshold,
+vs 60% of non-lean. The model leans heavily on waist and BMI — a
+documented limitation of all anthropometric T2D screening tools.
+
+**Missingness is unbiased:** Dropped rows (diet/income missing) have
+5.4% diabetes prevalence vs 5.0% in kept rows — the complete-case
+cohort is representative.
+
+**Age 65+ weakest subgroup:** AUC 0.677 vs 0.810 for age 18-44. The
+model is designed for early/mid-life screening; older adults have more
+complex comorbidity patterns that the non-lab features cannot capture.
+
+---
+
+## Saved Models (`models/`)
 
 | File | Format | Load with |
 |---|---|---|
-| `models/diabetes_logistic.joblib` | joblib | `joblib.load(path)` |
-| `models/diabetes_xgboost.json` | XGBoost native | `xgb.Booster(); model.load_model(path)` |
-| `models/diabetes_xgb_preprocessor.joblib` | joblib | `joblib.load(path)` |
-| `models/diabetes_feature_meta.joblib` | joblib | `joblib.load(path)` |
+| `diabetes_logistic.joblib` | joblib | `joblib.load(path)` |
+| `diabetes_xgboost.json` | XGBoost native | `xgb.Booster(); model.load_model(path)` |
+| `diabetes_xgb_preprocessor.joblib` | joblib | `joblib.load(path)` |
+| `diabetes_feature_meta.joblib` | joblib | `joblib.load(path)` |
 
-Models are also versioned as wandb artifacts under project
-`nhanes-diabetes-screening`, artifact name `diabetes_screening_models`.
+Models also versioned as wandb artifacts — project: `nhanes-diabetes-screening`.
 
 ---
 
-## Difference from the CKD Module
+## Experiment Tracking
 
-| Aspect | CKD Module | Diabetes Screening Module |
+All runs logged to Weights & Biases:
+- Project: `nhanes-diabetes-screening`
+- Run with: `wandb login` before first use
+
+---
+
+## Difference from CKD Module
+
+| Aspect | CKD Mortality | Diabetes Screening |
 |---|---|---|
-| Problem type | Survival analysis (time to death) | Binary classification (present condition) |
+| Problem type | Survival analysis | Binary classification |
 | Outcome | All-cause / renal death | Undiagnosed DM / prediabetes |
-| Features | Includes lab values (eGFR, ACR) | Non-lab only by design |
-| Primary metric | C-index | AUC |
-| Key model | Cox PH + XGBoost survival | XGBoost classifier + Logistic Regression |
-| Interpretability | Hazard ratios | SHAP values |
-| Clinical use case | Risk stratification | Population screening |
+| Features | Includes lab values | Non-lab only by design |
+| Primary metric | C-index | AUC + sensitivity@specificity |
+| Key model | Cox PH + XGBoost survival | Logistic Regression + XGBoost |
+| Interpretability | Hazard ratios | Coefficients + SHAP values |
+| Clinical use | Risk stratification | Population screening |

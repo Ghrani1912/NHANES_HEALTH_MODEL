@@ -76,15 +76,23 @@ def load_xpt(path: Path, keep_cols: list) -> pd.DataFrame:
 
 
 def merge_cycle(cycle_years: str, letter: str) -> pd.DataFrame:
-    cycle_dir = RAW / cycle_years
-    merged    = None
+    cycle_dir      = RAW / cycle_years
+    # also check diabetes_screening/raw/ for components downloaded there
+    cycle_dir_ds   = BASE / "diabetes_screening" / "raw" / cycle_years
+    merged = None
 
     for prefix, cols in COMPONENTS.items():
-        # try lowercase extension first, then uppercase
-        fpath = cycle_dir / f"{prefix}_{letter}.xpt"
-        if not fpath.exists():
-            fpath = cycle_dir / f"{prefix}_{letter}.XPT"
-        if not fpath.exists():
+        fpath = None
+        for base_dir in [cycle_dir, cycle_dir_ds]:
+            for ext in [".xpt", ".XPT"]:
+                candidate = base_dir / f"{prefix}_{letter}{ext}"
+                if candidate.exists():
+                    fpath = candidate
+                    break
+            if fpath:
+                break
+
+        if fpath is None:
             print(f"  [warn] missing file: {prefix}_{letter}.xpt")
             continue
 

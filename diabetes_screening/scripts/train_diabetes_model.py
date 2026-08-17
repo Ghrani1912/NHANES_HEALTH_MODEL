@@ -34,16 +34,13 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, roc_curve
 from sklearn.preprocessing import StandardScaler
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.pipeline import make_pipeline
 
 BASE      = Path(__file__).resolve().parent.parent   # diabetes_screening/
 PROCESSED = BASE / "processed"
 
-NUMERIC_COLS = ["age", "bmi", "waist_cm", "activity_score", "sedentary_minutes"]
+NUMERIC_COLS = ["age", "bmi", "waist_cm", "met_minutes_total", "sedentary_minutes",
+                "calories", "sugar_g", "fiber_g", "carbs_g", "sleep_hours", "income_ratio"]
 BINARY_COLS  = ["female", "hypertension", "family_history_diabetes",
-                "family_history_diabetes_missing",
-                # ever_smoker_missing dropped — redundant with RIDAGEYR
-                # (ablation: PR-AUC diff=0.0001, r=0.69 with age_18_19 indicator)
                 "ever_smoker", "current_smoker"]
 
 
@@ -81,8 +78,8 @@ def evaluate_model(name, y_true, y_score):
     thresh, sens_y, spec_y = youden_optimal_threshold(y_true, y_score)
     print(f"  Youden-optimal threshold: {thresh:.3f} "
           f"(sensitivity={sens_y:.3f}, specificity={spec_y:.3f})")
-    print(f"  NOTE: 'threshold' here is a CALIBRATED probability -- unlike "
-          f"before, this number is meant to be read as an actual risk %.")
+    print(f"  NOTE: 'threshold' here is a CALIBRATED probability -- "
+          f"this number is meant to be read as an actual risk %.")
     return auc
 
 
@@ -96,7 +93,6 @@ def cv_logistic(X: pd.DataFrame, y: pd.Series, n_splits=5):
         scaler  = StandardScaler()
         X_train = scaler.fit_transform(Xv[train_idx])
         X_test  = scaler.transform(Xv[test_idx])
-
         base       = LogisticRegression(max_iter=1000, class_weight="balanced")
         calibrated = CalibratedClassifierCV(base, method="isotonic", cv=3)
         calibrated.fit(X_train, yv[train_idx])
@@ -112,7 +108,6 @@ def cv_logistic(X: pd.DataFrame, y: pd.Series, n_splits=5):
     for fname, coef in sorted(zip(X.columns, full_model.coef_[0]),
                                key=lambda x: -abs(x[1])):
         print(f"  {fname}: {coef:.4f}")
-
     return oof_preds
 
 
@@ -129,8 +124,7 @@ def cv_xgboost(X: pd.DataFrame, y: pd.Series, n_splits=5):
             objective="binary:logistic", eval_metric="auc",
             max_depth=4, learning_rate=0.05, n_estimators=200,
             subsample=0.8, colsample_bytree=0.8,
-            scale_pos_weight=scale_pos_weight,
-            verbosity=0,
+            scale_pos_weight=scale_pos_weight, verbosity=0,
         )
         calibrated = CalibratedClassifierCV(base, method="isotonic", cv=3)
         calibrated.fit(Xv[train_idx], yv[train_idx])
@@ -143,15 +137,13 @@ def cv_xgboost(X: pd.DataFrame, y: pd.Series, n_splits=5):
         objective="binary:logistic", eval_metric="auc",
         max_depth=4, learning_rate=0.05, n_estimators=200,
         subsample=0.8, colsample_bytree=0.8,
-        scale_pos_weight=scale_pos_weight,
-        verbosity=0,
+        scale_pos_weight=scale_pos_weight, verbosity=0,
     )
     full_model.fit(Xv, yv)
     importance = dict(zip(X.columns, full_model.feature_importances_))
     print("\nFeature importance (gain-based, pre-calibration model):")
     for fname, score in sorted(importance.items(), key=lambda x: -x[1]):
         print(f"  {fname}: {score:.4f}")
-
     return oof_preds
 
 
@@ -174,8 +166,7 @@ def main():
           "know they have diabetes, what fraction would this tool have "
           "flagged for a confirmatory HbA1c test? These predicted "
           "probabilities are now calibrated -- a score of 0.3 should mean "
-          "roughly a 30% real chance, check this against the updated "
-          "calibration plot from diagnose_diabetes_model.py.")
+          "roughly a 30% real chance.")
 
 
 if __name__ == "__main__":

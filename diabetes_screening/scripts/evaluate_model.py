@@ -32,9 +32,9 @@ PROCESSED = BASE / "processed"
 DIAG_DIR  = PROCESSED / "diagnostics"
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
-NUMERIC_COLS = ["age", "bmi", "waist_cm", "activity_score", "sedentary_minutes"]
+NUMERIC_COLS = ["age", "bmi", "waist_cm", "met_minutes_total", "sedentary_minutes",
+                "calories", "sugar_g", "fiber_g", "carbs_g", "sleep_hours", "income_ratio"]
 BINARY_COLS  = ["female", "hypertension", "family_history_diabetes",
-                "family_history_diabetes_missing",
                 "ever_smoker", "current_smoker"]
 
 

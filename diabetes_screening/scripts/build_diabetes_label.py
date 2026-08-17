@@ -27,7 +27,7 @@ Predictors (all non-lab, all collectible in a 5-minute GP visit):
 Usage:
     python build_diabetes_label.py
 
-Reads:  ../processed/pooled.parquet
+Reads:  ../../processed/pooled.parquet   (main CKD pipeline output)
 Writes: ../processed/diabetes_analytic_dataset.parquet
 """
 
@@ -35,8 +35,11 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-BASE      = Path(__file__).resolve().parent.parent   # diabetes_screening/
-PROCESSED = BASE / "processed"
+# reads from main CKD pipeline's pooled.parquet (has all components now)
+BASE          = Path(__file__).resolve().parent.parent.parent   # nhanes_ckd root
+PROCESSED_IN  = BASE / "processed"
+PROCESSED_OUT = Path(__file__).resolve().parent.parent / "processed"
+PROCESSED_OUT.mkdir(parents=True, exist_ok=True)
 
 
 def build_label(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,28 +60,22 @@ def build_label(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def impute_with_missingness_flag(df: pd.DataFrame, col: str,
-                                  new_col_name: str = None) -> pd.DataFrame:
+def met_minutes(df: pd.DataFrame, yn_col: str, days_col: str,
+                min_col: str, met_value: float) -> pd.Series:
     """
-    Impute a binary (0/1) column's NaNs at the observed prevalence among
-    non-missing rows, and add a companion *_missing indicator.
-
-    Rationale: flat 0.5 fill assumes unknown == 50/50, but the actual base
-    rate may differ (MCQ300C ~42%). Imputing at prevalence is more honest.
-    The missingness flag lets models learn whether 'unknown' itself carries
-    a risk signal.
+    Standard GPAQ-style MET-minutes/week for one activity type:
+    METs x days/week x minutes/day, but only counted when the yes/no flag
+    is 'yes' -- when it's 'no', the days/minutes questions are skip-pattern
+    NaN by design and should contribute 0, not be treated as missing data.
     """
-    col_out    = new_col_name or col
-    is_missing = df[col].isna()
-    prevalence = df.loc[~is_missing, col].mean()
-    df[f"{col_out}_missing"] = is_missing.astype(int)
-    df[col_out] = df[col].fillna(prevalence)
-    print(f"    imputed {col}: {is_missing.sum()} NaNs at prevalence={prevalence:.3f}")
-    return df
+    did_activity = df[yn_col] == 1
+    days    = df[days_col].where(did_activity, 0).fillna(0)
+    minutes = df[min_col].where(did_activity, 0).fillna(0)
+    return met_value * days * minutes
 
 
 def clean_predictors(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()  # avoid SettingWithCopyWarning
+    df = df.copy()
     df["age"]      = df["RIDAGEYR"]
     df["female"]   = (df["RIAGENDR"] == 2).astype(int)
     df["race_eth"] = df["RIDRETH1"]   # keep as categorical code, one-hot later
@@ -88,78 +85,89 @@ def clean_predictors(df: pd.DataFrame) -> pd.DataFrame:
     n0 = df.shape[0]
     print(f"    [funnel] start: {n0}")
 
-    # hypertension: valid responses only (9=don't know → only 32 adults, drop)
+    # hypertension: valid responses only
     df = df[df["BPQ020"].isin([1, 2])].copy()
     print(f"    [funnel] after BPQ020 filter: {df.shape[0]} (-{n0 - df.shape[0]})")
+    n1 = df.shape[0]
     df["hypertension"] = (df["BPQ020"] == 1).astype(int)
 
-    # family history: map 1→1, 2→0; impute residual NaN at observed prevalence
-    # + add missingness flag (residual NaN ~1580 adults, evenly spread ~250/cycle)
-    df["_mcq_raw"] = df["MCQ300C"].map({1: 1.0, 2: 0.0})  # refused/DK → NaN
-    df = impute_with_missingness_flag(df, "_mcq_raw",
-                                      new_col_name="family_history_diabetes")
-    df = df.drop(columns=["_mcq_raw"])
+    # family history: 1=yes, 2=no; drop refused/DK/missing
+    df = df[df["MCQ300C"].isin([1, 2])].copy()
+    print(f"    [funnel] after MCQ300C filter: {df.shape[0]} (-{n1 - df.shape[0]})")
+    n2 = df.shape[0]
+    df["family_history_diabetes"] = (df["MCQ300C"] == 1).astype(int)
 
-    # smoking: map SMQ020 1→1, 2→0; impute residual NaN at observed prevalence
-    # NOTE: residual NaN in SMQ020 (n=823) is entirely age 18-19 in cycles
-    # 2007-2011 — NHANES changed SMQ routing after 2012 so all adults get asked.
-    # ever_smoker_missing flag was tested in ablation (PR-AUC diff=0.0001) and
-    # found REDUNDANT with RIDAGEYR — dropped. Age already encodes this signal.
-    df["_smq_raw"] = df["SMQ020"].map({1: 1.0, 2: 0.0})
-    df = impute_with_missingness_flag(df, "_smq_raw",
-                                      new_col_name="ever_smoker")
-    df = df.drop(columns=["_smq_raw", "ever_smoker_missing"])  # flag redundant with age
-    df["current_smoker"] = df["SMQ040"].isin([1, 2]).astype(int)  # NaN-safe
+    # smoking: SMQ020 ever smoked 100 cigs (1=yes, 2=no)
+    df = df[df["SMQ020"].isin([1, 2])].copy()
+    print(f"    [funnel] after SMQ020 filter: {df.shape[0]} (-{n2 - df.shape[0]})")
+    df["ever_smoker"]    = (df["SMQ020"] == 1).astype(int)
+    df["current_smoker"] = df["SMQ040"].isin([1, 2]).astype(int)   # NaN-safe
 
-    # physical activity: PAQ605/620/635/650/665 are 1=yes, 2=no
-    for col, name in [("PAQ605", "vigorous_work"),  ("PAQ620", "moderate_work"),
-                      ("PAQ635", "active_transport"), ("PAQ650", "vigorous_rec"),
-                      ("PAQ665", "moderate_rec")]:
-        df[name] = (df[col] == 1).astype(int)   # NaN-safe
-
-    df["activity_score"] = (
-        df["vigorous_work"] + df["moderate_work"] +
-        df["active_transport"] + df["vigorous_rec"] +
-        df["moderate_rec"]
+    # --- physical activity: real MET-minutes/week (replaces crude yes/no count) ---
+    df["met_min_vigorous_work"]    = met_minutes(df, "PAQ605", "PAQ610", "PAD615", 8)
+    df["met_min_moderate_work"]    = met_minutes(df, "PAQ620", "PAQ625", "PAD630", 4)
+    df["met_min_active_transport"] = met_minutes(df, "PAQ635", "PAQ640", "PAD645", 4)
+    df["met_min_vigorous_rec"]     = met_minutes(df, "PAQ650", "PAQ655", "PAD660", 8)
+    df["met_min_moderate_rec"]     = met_minutes(df, "PAQ665", "PAQ670", "PAD675", 4)
+    df["met_minutes_total"] = (
+        df["met_min_vigorous_work"]    + df["met_min_moderate_work"] +
+        df["met_min_active_transport"] + df["met_min_vigorous_rec"] +
+        df["met_min_moderate_rec"]
     )
     df["sedentary_minutes"] = df["PAD680"]
 
+    # --- diet (single-day 24hr recall — noisy but real signal in aggregate) ---
+    df["calories"] = df["DR1TKCAL"]
+    df["sugar_g"]  = df["DR1TSUGR"]
+    df["fiber_g"]  = df["DR1TFIBE"]
+    df["carbs_g"]  = df["DR1TCARB"]
+
+    # --- sleep (unified column from merge_cycle.py: handles SLD010H/SLD012 rename) ---
+    df["sleep_hours"] = df["sleep_hours"] if "sleep_hours" in df.columns else np.nan
+
+    # --- income (already in DEMO, just unused until now) ---
+    df["income_ratio"] = df["INDFMPIR"]
+
     n3 = df.shape[0]
-    n_bmi_missing      = df["bmi"].isna().sum()
-    n_waist_missing    = df["waist_cm"].isna().sum()
-    n_sedentary_missing = df["sedentary_minutes"].isna().sum()
+    check_cols = ["bmi", "waist_cm", "sedentary_minutes", "calories",
+                  "sugar_g", "fiber_g", "carbs_g", "sleep_hours", "income_ratio"]
     print(f"    [funnel] before final dropna, {n3} rows remain. "
-          f"Missingness on columns that CAN still be NaN here: "
-          f"bmi={n_bmi_missing} ({n_bmi_missing/n3:.1%}), "
-          f"waist_cm={n_waist_missing} ({n_waist_missing/n3:.1%}), "
-          f"sedentary_minutes={n_sedentary_missing} ({n_sedentary_missing/n3:.1%})")
+          f"Missingness on columns that CAN still be NaN here:")
+    for col in check_cols:
+        n_miss = df[col].isna().sum()
+        print(f"      {col}: {n_miss} ({n_miss/n3:.1%})")
+
     return df
 
 
 PREDICTOR_COLS = [
     "age", "female", "race_eth", "bmi", "waist_cm", "hypertension",
-    "family_history_diabetes", "family_history_diabetes_missing",
-    "ever_smoker",   # ever_smoker_missing dropped — redundant with RIDAGEYR (ablation PR-AUC diff=0.0001)
-    "current_smoker", "activity_score", "sedentary_minutes",
+    "family_history_diabetes", "ever_smoker", "current_smoker",
+    "met_minutes_total", "sedentary_minutes",
+    "calories", "sugar_g", "fiber_g", "carbs_g",
+    "sleep_hours", "income_ratio",
 ]
 
 
 def main():
-    df = pd.read_parquet(PROCESSED / "pooled.parquet")
+    df = pd.read_parquet(PROCESSED_IN / "pooled.parquet")
     print(f"Loaded pooled dataset: {df.shape[0]} rows")
 
-    df = build_label(df)
-
-    # Step 0: adults only — MCQ300C/BPQ020/SMQ020 are not asked to children,
-    # so including under-18s creates spurious "missing" counts that inflate
-    # apparent data loss. Filter first, then apply cohort criteria.
+    # Adults only. This is both a scope decision (a FINDRISC/ADA-style
+    # screening tool is meant for adults) AND the fix for most of the
+    # missingness in BPQ020/MCQ300C/SMQ020: those questions have hard age
+    # eligibility floors -- minors were never asked them.
+    n_before_age = df.shape[0]
     df = df[df["RIDAGEYR"] >= 18].copy()
-    print(f"Adults only (age >= 18): {df.shape[0]} rows")
+    print(f"Adults only (RIDAGEYR >= 18): {df.shape[0]} (-{n_before_age - df.shape[0]})")
+
+    df = build_label(df)
 
     # deployment-matching cohort: people who do NOT already know they have diabetes
     df = df[df["DIQ010"].isin([2, 3])].copy()
     df["borderline_selfreport"] = (df["DIQ010"] == 3).astype(int)
     print(f"Cohort excluding self-reported diagnosed diabetics: {df.shape[0]} rows")
+
     df = df[df["has_lab_label"]]
     print(f"Cohort with a valid lab label (HbA1c or glucose present): {df.shape[0]} rows")
 
@@ -167,7 +175,7 @@ def main():
     df = df.dropna(subset=PREDICTOR_COLS)
     print(f"Cohort with complete predictors: {df.shape[0]} rows")
 
-    out_path = PROCESSED / "diabetes_analytic_dataset.parquet"
+    out_path = PROCESSED_OUT / "diabetes_analytic_dataset.parquet"
     df.to_parquet(out_path, index=False)
     print(f"\nSaved -> {out_path}")
     print(f"\nLab-confirmed diabetes prevalence (undiagnosed, by definition): "

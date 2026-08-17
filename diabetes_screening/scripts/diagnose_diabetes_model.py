@@ -17,7 +17,8 @@ well it scores overall. Produces:
 Usage:
     python diagnose_diabetes_model.py
 
-Reads:  ../processed/pooled.parquet, ../processed/diabetes_analytic_dataset.parquet
+Reads:  ../processed/pooled.parquet (from main CKD pipeline),
+        ../processed/diabetes_analytic_dataset.parquet
 Writes: ../processed/diagnostics/*.png (plots), prints report to console
 """
 
@@ -34,16 +35,15 @@ from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, au
 from sklearn.preprocessing import StandardScaler
 from sklearn.calibration import calibration_curve, CalibratedClassifierCV
 
-BASE      = Path(__file__).resolve().parent.parent   # diabetes_screening/
-PROCESSED = BASE / "processed"
-DIAG_DIR  = PROCESSED / "diagnostics"
+BASE           = Path(__file__).resolve().parent.parent
+PROCESSED      = BASE / "processed"
+PROCESSED_IN   = BASE.parent / "processed"   # main CKD pipeline pooled.parquet
+DIAG_DIR       = PROCESSED / "diagnostics"
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
-NUMERIC_COLS = ["age", "bmi", "waist_cm", "activity_score", "sedentary_minutes"]
+NUMERIC_COLS = ["age", "bmi", "waist_cm", "met_minutes_total", "sedentary_minutes",
+                "calories", "sugar_g", "fiber_g", "carbs_g", "sleep_hours", "income_ratio"]
 BINARY_COLS  = ["female", "hypertension", "family_history_diabetes",
-                "family_history_diabetes_missing",
-                # ever_smoker_missing dropped — redundant with RIDAGEYR
-                # (ablation: PR-AUC diff=0.0001, r=0.69 with age_18_19 indicator)
                 "ever_smoker", "current_smoker"]
 
 
@@ -168,16 +168,8 @@ def subgroup_analysis(df: pd.DataFrame, y, log_oof):
 
 
 def missingness_check(pooled_path: Path):
-    """
-    Mirrors the ACTUAL derivation logic in build_diabetes_label.py's
-    clean_predictors() -- several raw columns (SMQ040, PAQ605/620/635/650/665)
-    are converted via .isin()/== comparisons that are NaN-safe (NaN becomes
-    False, not missing), so checking raw column missingness directly overstates
-    the real drop. Only the columns that genuinely stay NaN after derivation
-    (bmi, waist_cm, sedentary_minutes) plus the hard filters (BPQ020, MCQ300C,
-    SMQ020 valid-response checks) actually cause row loss.
-    """
     df = pd.read_parquet(pooled_path)
+    df = df[df["RIDAGEYR"] >= 18].copy()
     df = df[df["DIQ010"].isin([2, 3])].copy()
     has_label = df["LBXGH"].notna() | df["LBXGLU"].notna()
     df = df[has_label].copy()
@@ -188,36 +180,25 @@ def missingness_check(pooled_path: Path):
 
     n_total = df.shape[0]
     print("\n=== Missingness check (mirrors actual pipeline logic) ===")
-    print(f"Eligible cohort (has label, not self-reported diabetic): {n_total}")
+    print(f"Eligible adult cohort (has label, not self-reported diabetic): {n_total}")
 
-    # hard filters: these genuinely drop rows
-    n_after_bpq = df["BPQ020"].isin([1, 2]).sum()
-    n_after_mcq = df["MCQ300C"].isin([1, 2]).sum()
-    n_after_smq = df["SMQ020"].isin([1, 2]).sum()
-    print(f"  Valid BPQ020 (hypertension) response:  {n_after_bpq} "
-          f"({n_total - n_after_bpq} dropped)")
-    print(f"  Valid MCQ300C (family history) response: {n_after_mcq} "
-          f"({n_total - n_after_mcq} dropped)")
-    print(f"  Valid SMQ020 (ever smoked) response:   {n_after_smq} "
-          f"({n_total - n_after_smq} dropped)")
+    for col, lbl in [("BPQ020", "hypertension"), ("MCQ300C", "family history"),
+                     ("SMQ020", "ever smoked")]:
+        n_valid = df[col].isin([1, 2]).sum()
+        print(f"  Valid {lbl} ({col}) response: {n_valid} ({n_total - n_valid} dropped)")
 
-    # genuinely missing after derivation
-    for col, label in [("BMXBMI", "bmi"), ("BMXWAIST", "waist_cm"),
-                       ("PAD680", "sedentary_minutes")]:
-        miss = df[col].isna().sum()
-        print(f"  {label} ({col}) missing: {miss} ({miss/n_total:.1%})")
+    for col, lbl in [("BMXBMI", "bmi"), ("BMXWAIST", "waist_cm"),
+                     ("PAD680", "sedentary_minutes"), ("DR1TKCAL", "calories"),
+                     ("INDFMPIR", "income_ratio")]:
+        miss = df[col].isna().sum() if col in df.columns else n_total
+        print(f"  {lbl} ({col}) missing: {miss} ({miss/n_total:.1%})")
 
-    print("  (SMQ040, PAQ605/620/635/650/665 are NaN-safe via .isin()/== in the "
-          "real pipeline -- their raw missingness does NOT cause row drops)")
-    for col in ["SMQ040", "PAQ605", "PAQ620", "PAQ635", "PAQ650", "PAQ665"]:
-        miss = df[col].isna().mean()
-        print(f"    {col} raw missing: {miss:.1%} (does not affect cohort size)")
-
-    # true combined filter
     eligible = (
         df["BPQ020"].isin([1, 2]) & df["MCQ300C"].isin([1, 2]) &
         df["SMQ020"].isin([1, 2]) & df["BMXBMI"].notna() &
-        df["BMXWAIST"].notna() & df["PAD680"].notna()
+        df["BMXWAIST"].notna() & df["PAD680"].notna() &
+        (df["DR1TKCAL"].notna() if "DR1TKCAL" in df.columns else True) &
+        (df["INDFMPIR"].notna() if "INDFMPIR" in df.columns else True)
     )
     n_final = eligible.sum()
     print(f"\n  TRUE final modeling cohort size: {n_final} ({n_final/n_total:.1%} of eligible)")
@@ -242,7 +223,7 @@ def main():
     plot_calibration(y, log_oof, xgb_oof)
     plot_pr_curve(y, log_oof, xgb_oof)
     subgroup_analysis(df, y, log_oof)
-    missingness_check(PROCESSED / "pooled.parquet")
+    missingness_check(PROCESSED_IN / "pooled.parquet")
 
     print(f"\nAll plots saved to {DIAG_DIR}/")
 
